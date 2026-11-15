@@ -1,0 +1,5 @@
+node_modules
+dist
+.DS_Store
+# file sao lưu và lưu trữ có dữ liệu cá nhân — không đẩy lên GitHub
+TickLocal_*.json

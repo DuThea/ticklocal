@@ -1,0 +1,58 @@
+# Mỗi lần đẩy code lên nhánh main: chạy test, build, rồi đưa thư mục dist lên GitHub Pages.
+name: Deploy TickLocal to GitHub Pages
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # Đổi thành "npm ci" sau khi anh đã commit file package-lock.json
+      - name: Install
+        run: npm install
+
+      - name: Test
+        run: npm test
+
+      # Repo tên <user>.github.io chạy ở gốc '/', repo thường chạy ở '/<tên-repo>/'
+      - name: Build
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          if [[ "$REPO" == *.github.io ]]; then export BASE_PATH=/; else export BASE_PATH="/$REPO/"; fi
+          echo "BASE_PATH=$BASE_PATH"
+          npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
