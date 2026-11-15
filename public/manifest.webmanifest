@@ -1,8 +1,8 @@
 {
   "name": "TickLocal",
   "short_name": "TickLocal",
-  "description": "Việc, lịch, thói quen, Pomodoro — lưu hoàn toàn trên máy",
-  "lang": "vi",
+  "description": "Tasks, calendar, habits, Pomodoro — stored entirely on your device",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

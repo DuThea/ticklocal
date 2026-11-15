@@ -1,4 +1,4 @@
-# Mỗi lần đẩy code lên nhánh main: chạy test, build, rồi đưa thư mục dist lên GitHub Pages.
+# On every push to main: run the tests, build, then publish the dist folder to GitHub Pages.
 name: Deploy TickLocal to GitHub Pages
 
 on:
@@ -30,14 +30,14 @@ jobs:
         with:
           node-version: lts/*
 
-      # Đổi thành "npm ci" sau khi anh đã commit file package-lock.json
+      # Switch to "npm ci" once package-lock.json is committed
       - name: Install
         run: npm install
 
       - name: Test
         run: npm test
 
-      # Repo tên <user>.github.io chạy ở gốc '/', repo thường chạy ở '/<tên-repo>/'
+      # A repo named <user>.github.io is served at '/', any other repo at '/<repo-name>/'
       - name: Build
         run: |
           REPO="${{ github.event.repository.name }}"

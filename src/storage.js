@@ -1,5 +1,5 @@
-/* TickLocal v4 — lưu trữ. IndexedDB là kho chính: mỗi bản ghi một dòng, mỗi lần lưu chỉ ghi phần thay đổi.
-   v3 ghi lại toàn bộ dữ liệu vào localStorage sau mỗi chỉnh sửa (đứng giao diện 267 ms ở năm thứ ba, trần ~5 triệu ký tự). */
+/* TickLocal v4 — storage. IndexedDB is the main store: one row per record, each save writes only what changed.
+   v3 rewrote all data to localStorage after every edit (267 ms UI freezes by year three, ~5 million character cap). */
 import { STORAGE_KEY, LEGACY_KEYS, normalizeDb, seedData, todayStr } from './core.js';
 
 export const safeStorage = {
@@ -8,20 +8,20 @@ export const safeStorage = {
   })(),
   getItem(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } },
   setItem(key, val) { try { window.localStorage.setItem(key, val); return true; } catch (e) { return false; } },
-  removeItem(key) { try { window.localStorage.removeItem(key); } catch (e) { /* bỏ qua */ } }
+  removeItem(key) { try { window.localStorage.removeItem(key); } catch (e) { /* ignore */ } }
 };
 
 const DB_NAME = 'ticklocal';
 const META = 'meta';
 const COLLS = ['tasks', 'focusSessions', 'habits', 'lists', 'folders', 'tags', 'countdowns', 'smartFilters'];
-// Bộ sưu tập nhỏ cần giữ đúng thứ tự người dùng tạo (IndexedDB trả về theo thứ tự khoá)
+// Small collections that must keep the user's creation order (IndexedDB returns rows in key order)
 const ORDERED = ['folders', 'lists', 'tags', 'habits', 'countdowns', 'smartFilters'];
 
 function openIdb() {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const fail = (err) => { if (!settled) { settled = true; reject(err || new Error('IndexedDB không dùng được')); } };
-    const timer = setTimeout(() => fail(new Error('IndexedDB không phản hồi')), 4000);
+    const fail = (err) => { if (!settled) { settled = true; reject(err || new Error('IndexedDB unavailable')); } };
+    const timer = setTimeout(() => fail(new Error('IndexedDB not responding')), 4000);
     try {
       const rq = window.indexedDB.open(DB_NAME, 1);
       rq.onupgradeneeded = () => {
@@ -36,7 +36,7 @@ function openIdb() {
         resolve(rq.result);
       };
       rq.onerror = () => { clearTimeout(timer); fail(rq.error); };
-      rq.onblocked = () => { clearTimeout(timer); fail(new Error('IndexedDB đang bị khoá')); };
+      rq.onblocked = () => { clearTimeout(timer); fail(new Error('IndexedDB is blocked')); };
     } catch (e) { clearTimeout(timer); fail(e); }
   });
 }
@@ -44,8 +44,8 @@ function openIdb() {
 const reqP = (rq) => new Promise((resolve, reject) => { rq.onsuccess = () => resolve(rq.result); rq.onerror = () => reject(rq.error); });
 const txDone = (tx) => new Promise((resolve, reject) => {
   tx.oncomplete = () => resolve();
-  tx.onerror = () => reject(tx.error || new Error('Giao dịch lỗi'));
-  tx.onabort = () => reject(tx.error || new Error('Giao dịch bị huỷ (có thể hết dung lượng)'));
+  tx.onerror = () => reject(tx.error || new Error('Transaction failed'));
+  tx.onabort = () => reject(tx.error || new Error('Transaction aborted (possibly out of space)'));
 });
 
 async function idbLoad(idb) {
@@ -55,7 +55,7 @@ async function idbLoad(idb) {
   const jobs = COLLS.map((c) => reqP(tx.objectStore(c).getAll()).then((rows) => { out[c] = rows; }));
   for (const key of ['schemaVersion', 'settings', 'archive', 'order', 'lastUpdatedAt']) jobs.push(reqP(meta.get(key)).then((v) => { out[key] = v; }));
   await Promise.all(jobs);
-  if (out.schemaVersion == null) return null; // kho còn trống
+  if (out.schemaVersion == null) return null; // the store is still empty
   const order = out.order || {};
   for (const c of ORDERED) {
     const pos = new Map((order[c] || []).map((id, i) => [id, i]));
@@ -66,8 +66,8 @@ async function idbLoad(idb) {
   return out;
 }
 
-// So theo tham chiếu: state bất biến nên bản ghi nào còn nguyên object cũ là chưa đổi → không ghi lại.
-// prev = null nghĩa là ghi đè toàn bộ (lần đầu, sau khi nhập file, sau di trú).
+// Compare by reference: state is immutable, so a record that is still the same object has not changed → not rewritten.
+// prev = null means overwrite everything (first run, after an import, after a migration).
 function idbSave(idb, prev, next) {
   const tx = idb.transaction([...COLLS, META], 'readwrite');
   let writes = 0;
@@ -102,19 +102,19 @@ function readLocalStorage() {
     try {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.tasks)) return { db: normalizeDb(parsed).db, key };
-    } catch (e) { /* rơi xuống nhánh giữ bản hỏng */ }
-    safeStorage.setItem(`${key}_CORRUPT_${Date.now()}`, raw); // giữ bản gốc để cứu, không ghi đè
+    } catch (e) { /* fall through to keeping the corrupted copy */ }
+    safeStorage.setItem(`${key}_CORRUPT_${Date.now()}`, raw); // keep the original for recovery, never overwrite it
     return { corrupt: true };
   }
   return null;
 }
 
-/* Mở kho và trả về:
-     mode    'idb' | 'ls' (không có IndexedDB, quay về localStorage) | 'memory' (không lưu được gì)
-     initial dữ liệu đã normalize để khởi tạo state
-     saved   ảnh chụp đã nằm trong kho (null = chưa ghi lần nào)
+/* Open the store and return:
+     mode    'idb' | 'ls' (no IndexedDB, falls back to localStorage) | 'memory' (cannot save anything)
+     initial normalized data used to initialize state
+     saved   snapshot already in the store (null = never written)
      origin  'v4' | 'migrated' | 'seed' | 'corrupt'
-     save(prev, next) → Promise<số bản ghi đã ghi> */
+     save(prev, next) → Promise<number of records written> */
 export async function openStore() {
   let idb = null;
   try { idb = await openIdb(); } catch (e) { idb = null; }
@@ -139,13 +139,13 @@ export async function openStore() {
     return {
       mode: 'ls', initial, origin, saved: legacy && legacy.key === STORAGE_KEY ? initial : null,
       save: (prev, next) => (safeStorage.setItem(STORAGE_KEY, JSON.stringify({ ...next, lastUpdatedAt: new Date().toISOString() }))
-        ? Promise.resolve(1) : Promise.reject(new Error('localStorage đầy')))
+        ? Promise.resolve(1) : Promise.reject(new Error('localStorage is full')))
     };
   }
   return { mode: 'memory', initial, saved: null, origin, save: () => Promise.resolve(0) };
 }
 
-// Xin trình duyệt không tự dọn dữ liệu của app khi máy thiếu chỗ
+// Ask the browser not to evict the app's data when the device runs low on space
 export async function requestPersistence() {
   try { return !!(navigator.storage && navigator.storage.persist && await navigator.storage.persist()); } catch (e) { return false; }
 }

@@ -1,90 +1,104 @@
 # TickLocal v4.0
 
-Việc, lịch, thói quen, Pomodoro và ma trận Eisenhower trong một web app chạy hoàn toàn trên máy. Không tài khoản, không máy chủ, không AI.
+Tasks, calendar, habits, Pomodoro and an Eisenhower matrix in one web app that runs entirely on your device. No account, no server, no AI.
 
-## Chạy trên máy (Windows, PowerShell)
+## Run locally (Windows, PowerShell)
 
 ```powershell
 npm install
-npm run dev        # mở http://localhost:5173
-npm test           # 23 unit test cho lõi, tự chạy theo giờ Việt Nam
-npm run build      # tạo thư mục dist/ để đưa lên mạng
-npm run preview    # xem thử bản build (service worker chỉ bật ở bản build)
+npm run dev        # opens http://localhost:5173
+npm test           # 23 unit tests for the core, always run in GMT+7
+npm run build      # creates the dist/ folder for deployment
+npm run preview    # preview the build (the service worker is only enabled in builds)
 ```
 
-## Đưa lên mạng và cài lên iPhone
+## Deploy and install on iPhone
 
-**GitHub Pages (miễn phí, repo phải để public):** đẩy code lên nhánh `main`, vào Settings → Pages → Source chọn **GitHub Actions**. File `.github/workflows/deploy.yml` tự chạy test, build và đăng app lên `https://<tên-github>.github.io/<tên-repo>/`. Đường dẫn con được truyền qua biến `BASE_PATH`, nên không cần sửa `vite.config.js`.
+**GitHub Pages (free, the repo must be public):** push to the `main` branch, then go to Settings → Pages → Source and choose **GitHub Actions**. The `.github/workflows/deploy.yml` workflow runs the tests, builds and publishes the app to `https://<github-user>.github.io/<repo-name>/`. The sub-path is passed through the `BASE_PATH` variable, so `vite.config.js` needs no changes.
 
-**Netlify:** tạo site từ repo; `netlify.toml` đã khai báo sẵn lệnh build và thư mục `dist`.
+**Netlify:** create a site from the repo; `netlify.toml` already declares the build command and the `dist` folder.
 
-Mỗi địa chỉ có kho dữ liệu riêng. Đổi nơi đăng app thì xuất JSON ở địa chỉ cũ rồi nhập ở địa chỉ mới.
+Each address has its own data store. If you move the app to a new address, export JSON at the old address and import it at the new one.
 
-1. Trên iPhone, mở địa chỉ app bằng Safari → Chia sẻ → **Thêm vào Màn hình chính**.
-2. Từ đó chỉ mở bằng biểu tượng. Dữ liệu của biểu tượng và của tab Safari là hai kho riêng.
-3. Vào tab Dữ liệu → **Nhập JSON** → chọn `TickLocal_KhoiDau_v4.json` để có sẵn danh sách, thẻ, bộ lọc, thói quen cho ba mảng việc.
+1. On iPhone, open the app address in Safari → Share → **Add to Home Screen**.
+2. From then on, only open it from the icon. The icon and the Safari tab keep separate data stores.
+3. Go to the Data tab → **Import JSON** → choose a starter file (for example `TickLocal_KhoiDau_v4.json`) to get ready-made lists, tags, filters and habits.
 
-Mỗi lần phát hành bản mới, tăng số trong `CACHE` ở `public/sw.js` để máy người dùng nhận bản mới.
+For every new release, bump the `CACHE` number in `public/sw.js` so users' devices pick up the new version.
 
-## Cấu trúc
+## Quick-add syntax
 
-| File | Vai trò |
+Type a task in plain English; the parser pulls out the details and leaves the rest as the title.
+
+| You type | Result |
 | --- | --- |
-| `src/core.js` | Lõi thuần: ngày tháng, parser nhập nhanh, bộ lặp, normalize, reducer, thống kê, xuất .ics. Không đụng DOM hay lưu trữ. |
-| `src/storage.js` | IndexedDB: mỗi bản ghi một dòng, mỗi lần lưu chỉ ghi phần thay đổi. Tự chuyển dữ liệu từ v3/v2 trong localStorage. |
-| `src/App.jsx` | Giao diện React. |
-| `public/` | Manifest, service worker, biểu tượng. |
-| `tests/core.test.mjs` | Unit test cho lõi (`node --test`, không cần thư viện). |
+| `Team meeting tomorrow 9:30am !high #urgent` | Due tomorrow 09:30, high priority, tag `urgent` |
+| `today`, `tonight`, `tomorrow`, `day after tomorrow` | Relative dates |
+| `friday`, `on sunday`, `next fri` | Next occurrence of that weekday (short names need `on` / `next`) |
+| `20/11`, `on 1/2`, `5/3/2027` | Dates are **day/month**; `1/2`, `1/3`, `2/3`, `1/4`, `3/4` alone are fractions |
+| `14:30`, `9:30`, `3pm`, `9 pm`, `at 7` | Times; a bare `2h` or `20` is a duration and stays in the title |
+| `daily`, `every day`, `weekly`, `monthly`, `weekdays`, `mon-fri`, `every 2 weeks` | Repeat rules |
+| `!high`, `!med`, `!low`, `!none` (or `!3`…`!0`) | Priority |
 
-## Thay đổi so với v3
+## Structure
 
-Mỗi mục ứng với một lỗi trong bản đánh giá sau giả lập 3 năm.
-
-| Vấn đề ở v3 | v4 |
+| File | Role |
 | --- | --- |
-| Lặp hàng tháng ngày 31 trôi về 28 mãi mãi | Lưu ngày gốc: 31/01 → 28/02 → 31/03. Dời hạn tạm ("Dời sang mai") không đổi ngày gốc. |
-| "Backtest 2h" thành hạn 02:00 hôm nay | "9h" trần là thời lượng; chỉ là giờ khi có phút (9h30, 14:30), có "lúc", hoặc có sáng/trưa/chiều/tối/đêm. |
-| "1/2 viên" thành ngày 1/2 | 1/2, 1/3, 2/3, 1/4, 3/4 là phân số, trừ khi viết "ngày 1/2" hoặc có năm. |
-| Tiêu đề ghi chú bị cắt mất "mai", "9h" | Ghi chú không chạy parser. |
-| Quên tắt đếm xuôi → phiên 568 phút | Phiên trên 3 giờ phải xác nhận, nhập được số phút thật; xoá được từng phiên. |
-| Không biết lần sao lưu gần nhất | Ghi ngày xuất file; băng nhắc khi quá 7 ngày. |
-| Safari có thể xoá dữ liệu sau 7 ngày | Có manifest và service worker để cài lên Màn hình chính; mở được khi mất mạng; xin quyền lưu trữ lâu dài. |
-| Trần localStorage ~5 MB, đứng 356 ms mỗi lần lưu ở năm 3 | IndexedDB, ghi từng bản ghi; không còn tác vụ nào dài quá 50 ms khi lưu. |
-| Dữ liệu tăng mãi | Nút "Lưu trữ việc cũ": xuất việc đã xong và phiên tập trung cũ hơn 12 tháng ra file riêng rồi gỡ khỏi app; tổng số vẫn giữ. |
-| Checklist "mỗi ngày" quá hạn mọi cuối tuần | Kiểu lặp "Ngày thường (T2–T6)" và "Mỗi N ngày/tuần/tháng". Gõ được: `ngày thường`, `thứ 2-6`, `mỗi 2 tuần`. |
-| Gõ nhầm thẻ là sinh thẻ rác (55 thẻ sau 3 năm) | Hỏi trước khi tạo thẻ mới, gợi ý thẻ gần giống (bỏ dấu, sai ≤ 2 ký tự). Gộp thẻ trong màn hình sửa thẻ. |
-| Không dời hạn nhanh, không nhân bản | Nút Hôm nay / Dời sang mai / +7 ngày, Nhân bản, Chuyển việc ↔ ghi chú. |
-| Thói quen ngày thường đứt chuỗi mỗi cuối tuần | Chọn ngày trong tuần cho từng thói quen; chuỗi và tỷ lệ tính theo lịch đó. |
-| Tìm kiếm chỉ trong mục đang mở | Mặc định tìm toàn bộ, gồm ghi chú; có nút thu hẹp. |
-| Không biết giờ tập trung đi về đâu | Báo cáo tuần/tháng có giờ tập trung theo danh sách. |
-| Không có nhắc giờ | Băng nhắc + tiếng bíp + thông báo hệ thống khi app đang mở; xuất việc sang app Lịch (.ics) để iPhone nhắc cả khi app đóng. |
-| Nút Hoàn tác mất khi có thông báo mới; hoàn tác xoá luôn việc làm sau đó | Nút sống 8 giây độc lập với thông báo; chỉ đảo đúng thao tác đó. |
-| Gõ tiêu đề khựng khi dữ liệu lớn | Tiêu đề, mô tả gõ vào bản nháp, ghi sau 300 ms. |
-| Xoá số trong ô cài đặt là nhảy về 1 | Ô số chỉ kẹp giá trị khi rời ô. |
-| "Đặt lại" xoá sạch rồi nạp dữ liệu mẫu | Tách thành "Xoá trắng" và "Dữ liệu mẫu". |
+| `src/core.js` | Pure core: dates, quick-add parser, recurrence, normalize, reducer, stats, .ics export. No DOM or storage access. |
+| `src/storage.js` | IndexedDB: one row per record, each save writes only what changed. Migrates v3/v2 data from localStorage automatically. |
+| `src/App.jsx` | React UI. |
+| `public/` | Manifest, service worker, icons. |
+| `tests/core.test.mjs` | Unit tests for the core (`node --test`, no libraries needed). |
 
-## Số đo (giả lập 3 năm, cùng một người dùng mẫu)
+## Changes since v3
 
-Chromium giả lập màn hình 390×844, CPU giảm tốc 4 lần, bản build production. Không phải iPhone thật.
+Each item matches a bug found in the review after a simulated 3 years of use.
 
-| Năm thứ 3 | v3 | v4 | v4 có lưu trữ hằng tháng |
+| Problem in v3 | v4 |
+| --- | --- |
+| A monthly repeat on the 31st drifted to the 28th forever | Keeps the anchor day: Jan 31 → Feb 28 → Mar 31. Temporarily moving a task ("Move to tomorrow") does not change the anchor day. |
+| "Backtest 2h" became due at 02:00 today | A bare "2h" is a duration; it is a time only with minutes (9:30, 14:30), with "at", or with am/pm. |
+| "1/2 pill" became the date 1/2 | 1/2, 1/3, 2/3, 1/4, 3/4 are fractions, unless written "on 1/2" or with a year. |
+| Note titles lost words like "tomorrow" or "9h" | Notes do not run the parser. |
+| A forgotten stopwatch → a 568-minute session | Sessions over 3 hours must be confirmed, with the real minutes entered; each session can be deleted. |
+| No idea when the last backup was | The export date is recorded; a banner appears after 7 days. |
+| Safari may delete data after 7 days | Manifest and service worker for installing to the Home Screen; works offline; asks for persistent storage. |
+| localStorage cap of ~5 MB, 356 ms freeze on every save in year 3 | IndexedDB with per-record writes; no save task takes longer than 50 ms. |
+| Data grows forever | "Archive old tasks" button: exports completed tasks and focus sessions older than 12 months to a separate file and removes them from the app; totals are kept. |
+| A "daily" checklist was overdue every weekend | "Weekdays (Mon–Fri)" and "Every N days/weeks/months" repeat rules. You can type `weekdays`, `mon-fri`, `every 2 weeks`. |
+| Typos created junk tags (55 tags after 3 years) | Asks before creating a new tag and suggests similar existing tags (accents ignored, ≤ 2 typos). Tags can be merged from the tag edit screen. |
+| No quick rescheduling, no duplicate | Today / Move to tomorrow / +7 days buttons, Duplicate, Convert task ↔ note. |
+| Weekday habits broke their streak every weekend | Pick the weekdays for each habit; streaks and rates follow that schedule. |
+| Search only covered the current view | Searches everything by default, notes included; a button narrows it down. |
+| No idea where focus time went | Weekly/monthly review with focus time by list. |
+| No reminders | Reminder banner + beep + system notification while the app is open; export tasks to Calendar (.ics) so the iPhone reminds you even when the app is closed. |
+| The Undo button disappeared on a new toast; undo also wiped later work | The button lives 8 seconds independently of toasts and reverts only that one action. |
+| Typing a title lagged with large data | Title and description are typed into a draft and saved after 300 ms. |
+| Clearing a number in settings jumped to 1 | Number fields clamp only on blur. |
+| "Reset" wiped everything and loaded sample data | Split into "Wipe all" and "Sample data". |
+
+## Measurements (simulated 3 years, same sample user)
+
+Chromium emulating a 390×844 screen, 4× CPU slowdown, production build. Not a real iPhone.
+
+| Year 3 | v3 | v4 | v4 with monthly archiving |
 | --- | --- | --- | --- |
-| Mở app (ms) | 528 | 750 | 625 |
-| Giao diện đứng mỗi lần lưu (ms) | 356 | dưới 50 | dưới 50 |
-| Thêm việc (ms) | 48 | 48 | 32 |
-| Gõ tiêu đề, mỗi ký tự (ms) | 64 | 40 | 48 |
-| Gõ tìm kiếm, mỗi ký tự (ms) | 40 | 96 | — |
-| Dung lượng dữ liệu (triệu ký tự) | 4,19 | 4,64 | 2,42 |
-| Phần đã dùng của hạn mức | 80% của ~5 MB | 5 MB / 2 GB (Chromium) | 2,6 MB / 2 GB |
-| Việc bị đặt giờ sai do "2h" | 402 | 0 | 0 |
-| Số thẻ (người dùng tạo 7) | 62 | 7 | 7 |
-| Kiểm tra toàn vẹn | 0 lỗi | 0 lỗi | 0 lỗi |
+| App startup (ms) | 528 | 750 | 625 |
+| UI freeze per save (ms) | 356 | under 50 | under 50 |
+| Add a task (ms) | 48 | 48 | 32 |
+| Typing a title, per keystroke (ms) | 64 | 40 | 48 |
+| Typing a search, per keystroke (ms) | 40 | 96 | — |
+| Data size (million characters) | 4.19 | 4.64 | 2.42 |
+| Quota used | 80% of ~5 MB | 5 MB / 2 GB (Chromium) | 2.6 MB / 2 GB |
+| Tasks given a wrong time because of "2h" | 402 | 0 | 0 |
+| Number of tags (user created 7) | 62 | 7 | 7 |
+| Integrity check | 0 errors | 0 errors | 0 errors |
 
-Mở app chậm hơn v3 vì IndexedDB đọc từng bản ghi thay vì một chuỗi JSON. Tìm kiếm chậm hơn vì giờ tìm cả nội dung ghi chú; kết quả được tính sau khi gõ nên ô nhập không khựng.
+Startup is slower than v3 because IndexedDB reads record by record instead of one JSON string. Search is slower because it now also searches note content; results are computed after typing, so the input does not lag.
 
-## Giới hạn đã biết
+## Known limitations
 
-- Chưa thử trên iPhone thật: hạn mức IndexedDB, thông báo hệ thống và tiếng nền khi khoá máy trên iOS có thể khác.
-- Nhắc giờ khi app đóng chỉ có qua app Lịch (.ics). Thông báo đẩy thật cần máy chủ, trái nguyên tắc của app.
-- Ở năm thứ 3, mỗi lần lưu vẫn duyệt cả mảng việc để tìm bản ghi đã đổi (vài ms). Lưu trữ hằng tháng giữ con số này nhỏ.
-- `npm run build` chưa chạy được trong môi trường phát triển (không có mạng để cài Vite); bản thử nghiệm được dựng bằng esbuild từ cùng mã nguồn.
+- Not yet tested on a real iPhone: IndexedDB quotas, system notifications and background audio with the screen locked may behave differently on iOS.
+- Reminders while the app is closed only work through the Calendar app (.ics). Real push notifications need a server, which goes against the app's principles.
+- In year 3, each save still scans the whole task array to find changed records (a few ms). Monthly archiving keeps this small.
+- `npm run build` could not run in the original development environment (no network to install Vite); the test build was made with esbuild from the same source.

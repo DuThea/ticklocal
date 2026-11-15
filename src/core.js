@@ -1,10 +1,11 @@
-/* TickLocal v4 — lõi thuần: ngày tháng, parser, bộ lặp, normalize, reducer, selector. Không đụng DOM, không đụng lưu trữ. */
+/* TickLocal v4 — pure core: dates, parser, recurrence, normalize, reducer, selectors. No DOM, no storage. */
 
 // ==========================================
-// 1A. NGÀY THÁNG — luôn theo giờ địa phương, chuỗi YYYY-MM-DD
-// (v2 dùng toISOString() = giờ UTC nên lệch 1 ngày ở GMT+7)
+// 1A. DATES — always local time, YYYY-MM-DD strings
+// (v2 used toISOString() = UTC, which was off by one day in GMT+7)
 // ==========================================
 const pad2 = (n) => String(n).padStart(2, '0');
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const toDateStr = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const parseDateStr = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const isDateStr = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && toDateStr(parseDateStr(s)) === s;
@@ -13,7 +14,7 @@ const todayStr = () => toDateStr(new Date());
 const addDays = (s, n) => { const d = parseDateStr(s); d.setDate(d.getDate() + n); return toDateStr(d); };
 const diffDays = (a, b) => Math.round((parseDateStr(a) - parseDateStr(b)) / 86400000);
 const isoToLocalDate = (iso) => { const d = new Date(iso); return isNaN(d) ? null : toDateStr(d); };
-// Cộng tháng có kẹp ngày: 31/01 + 1 tháng = 28/02 (v2 nhảy sang 03/03)
+// Add months with day clamping: Jan 31 + 1 month = Feb 28 (v2 jumped to Mar 3)
 const addMonths = (s, n, anchorDay) => {
   const d = parseDateStr(s);
   const day = anchorDay || d.getDate();
@@ -25,42 +26,43 @@ const addMonths = (s, n, anchorDay) => {
 const fmtDate = (s, today) => {
   if (!s) return '';
   const diff = diffDays(s, today);
-  if (diff === 0) return 'Hôm nay';
-  if (diff === 1) return 'Ngày mai';
-  if (diff === -1) return 'Hôm qua';
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  if (diff === -1) return 'Yesterday';
   const [y, m, d] = s.split('-');
-  return y === today.slice(0, 4) ? `${d}/${m}` : `${d}/${m}/${y}`;
+  const mon = MONTHS[Number(m) - 1].slice(0, 3);
+  return y === today.slice(0, 4) ? `${mon} ${Number(d)}` : `${mon} ${Number(d)}, ${y}`;
 };
 
 // ==========================================
-// 1B. HẰNG SỐ
+// 1B. CONSTANTS
 // ==========================================
 const SCHEMA = 4;
-const STORAGE_KEY = 'TICKLOCAL_IOS_DB_V4'; // chỉ dùng khi trình duyệt không có IndexedDB
+const STORAGE_KEY = 'TICKLOCAL_IOS_DB_V4'; // only used when the browser has no IndexedDB
 const LEGACY_KEYS = ['TICKLOCAL_IOS_DB_V3', 'TICKLOCAL_IOS_DB_V2'];
 const TIMER_KEY = 'TICKLOCAL_TIMER_V4';
 const RULES = ['NONE', 'DAILY', 'WEEKDAYS', 'WEEKLY', 'MONTHLY'];
-const RULE_LABEL = { NONE: 'Không lặp', DAILY: 'Hàng ngày', WEEKDAYS: 'Ngày thường (T2–T6)', WEEKLY: 'Hàng tuần', MONTHLY: 'Hàng tháng' };
-const WEEKDAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+const RULE_LABEL = { NONE: 'No repeat', DAILY: 'Daily', WEEKDAYS: 'Weekdays (Mon–Fri)', WEEKLY: 'Weekly', MONTHLY: 'Monthly' };
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const ruleLabel = (t) => {
   const n = t.recurrenceInterval || 1;
   if (n === 1 || t.recurrenceRule === 'WEEKDAYS' || t.recurrenceRule === 'NONE') return RULE_LABEL[t.recurrenceRule];
-  return `Mỗi ${n} ${{ DAILY: 'ngày', WEEKLY: 'tuần', MONTHLY: 'tháng' }[t.recurrenceRule]}`;
+  return `Every ${n} ${{ DAILY: 'days', WEEKLY: 'weeks', MONTHLY: 'months' }[t.recurrenceRule]}`;
 };
 const PALETTE = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#0EA5E9', '#EC4899', '#64748B'];
 const EMOJIS = ['🔥', '💧', '📚', '🧘', '💻', '🏃', '🎯', '🚀', '🏆', '🛡️', '🎂', '✈️'];
-const NOISES = [['OFF', 'Tắt'], ['WHITE', 'Ồn trắng'], ['PINK', 'Ồn hồng'], ['BROWN', 'Ồn nâu']];
+const NOISES = [['OFF', 'Off'], ['WHITE', 'White noise'], ['PINK', 'Pink noise'], ['BROWN', 'Brown noise']];
 const PRIORITY = {
-  3: { label: 'Cao', border: 'border-red-500', hex: '#EF4444' },
-  2: { label: 'Trung bình', border: 'border-amber-500', hex: '#F59E0B' },
-  1: { label: 'Thấp', border: 'border-blue-500', hex: '#3B82F6' },
-  0: { label: 'Không', border: 'border-slate-400', hex: '#94A3B8' }
+  3: { label: 'High', border: 'border-red-500', hex: '#EF4444' },
+  2: { label: 'Medium', border: 'border-amber-500', hex: '#F59E0B' },
+  1: { label: 'Low', border: 'border-blue-500', hex: '#3B82F6' },
+  0: { label: 'None', border: 'border-slate-400', hex: '#94A3B8' }
 };
 const DEFAULT_SETTINGS = { darkMode: true, focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, noise: 'OFF', beep: true, viewMode: 'list', remind: true, remindLead: 10, lastBackupAt: null };
 const SMART = {
-  SMART_TODAY: 'Hôm nay', SMART_NEXT7: '7 ngày tới', SMART_INBOX: 'Hộp thư đến', SMART_ALL: 'Tất cả công việc',
-  SMART_NOTES: 'Sổ tay ghi chú', SMART_COUNTDOWN: 'Đếm ngược', SMART_TRASH: 'Thùng rác'
+  SMART_TODAY: 'Today', SMART_NEXT7: 'Next 7 days', SMART_INBOX: 'Inbox', SMART_ALL: 'All tasks',
+  SMART_NOTES: 'Notebook', SMART_COUNTDOWN: 'Countdown', SMART_TRASH: 'Trash'
 };
 
 let uidSeq = 0;
@@ -68,14 +70,14 @@ const uid = (prefix) => `${prefix}-${Date.now().toString(36)}${(uidSeq++).toStri
 const clampInt = (v, lo, hi, dflt) => { const n = v === '' || v == null ? NaN : Math.round(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt; };
 
 // ==========================================
-// 1C. PARSER NHẬP NHANH (thuần, không AI)
+// 1C. QUICK-ADD PARSER (pure, no AI)
 // ==========================================
-// Ranh giới từ có hỗ trợ tiếng Việt, không dùng lookbehind để chạy được trên Safari cũ
+// Unicode-aware word boundaries, without lookbehind so it runs on older Safari
 const tok = (pattern, flags = 'iu') => new RegExp(`(^|[^\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, flags);
-const WEEKDAY = { 'hai': 1, '2': 1, 'ba': 2, '3': 2, 'tư': 3, 'tu': 3, '4': 3, 'năm': 4, 'nam': 4, '5': 4, 'sáu': 5, 'sau': 5, '6': 5, 'bảy': 6, 'bay': 6, '7': 6 };
+const WEEKDAY = { sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3, thursday: 4, thu: 4, thur: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6 };
 
 const FRACTIONS = new Set(['1/2', '1/3', '2/3', '1/4', '3/4']);
-const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/[^a-z0-9]/g, '');
+const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replaceAll(String.fromCharCode(0x111), 'd').replace(/[^a-z0-9]/g, ''); // 0x111 = d with stroke (not decomposed by NFD)
 function editDistance(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
@@ -85,7 +87,7 @@ function editDistance(a, b) {
   }
   return prev[b.length];
 }
-// Thẻ có sẵn gần giống tên vừa gõ (bỏ dấu, sai ≤ 2 ký tự, hoặc thừa đuôi) → gợi ý thay vì tạo thẻ rác
+// Existing tag close to the typed name (accents ignored, ≤ 2 typos, or an extra suffix) → suggest it instead of creating a junk tag
 function nearestTag(name, tags) {
   const f = fold(name);
   if (f.length < 3) return null;
@@ -102,7 +104,7 @@ function nearestTag(name, tags) {
 function parseQuickAdd(rawText, tags, today) {
   let text = ` ${rawText} `;
   const out = { title: '', priority: null, dueDate: null, dueTime: null, recurrence: null, interval: 1, tagIds: [], newTagNames: [] };
-  // Duyệt từng chỗ khớp; fn trả false = không phải thứ cần tìm, thử chỗ khớp kế tiếp
+  // Walk every match; fn returning false = not what we are looking for, try the next match
   const take = (re, fn) => {
     const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
     let m;
@@ -112,9 +114,9 @@ function parseQuickAdd(rawText, tags, today) {
     return false;
   };
 
-  take(/(^|\s)!(high|cao|3|medium|med|tb|2|low|thap|thấp|1|none|0)(?=\s|$)/iu, (m) => {
+  take(/(^|\s)!(high|hi|3|medium|med|2|low|lo|1|none|0)(?=\s|$)/iu, (m) => {
     const v = m[2].toLowerCase();
-    out.priority = ['high', 'cao', '3'].includes(v) ? 3 : ['medium', 'med', 'tb', '2'].includes(v) ? 2 : ['low', 'thap', 'thấp', '1'].includes(v) ? 1 : 0;
+    out.priority = ['high', 'hi', '3'].includes(v) ? 3 : ['medium', 'med', '2'].includes(v) ? 2 : ['low', 'lo', '1'].includes(v) ? 1 : 0;
   });
 
   text = text.replace(/(^|\s)#([\p{L}\p{N}_-]+)/gu, (_, pre, name) => {
@@ -126,30 +128,29 @@ function parseQuickAdd(rawText, tags, today) {
   });
 
   const setRule = (rule) => () => { out.recurrence = rule; };
-  take(tok('(?:mỗi|moi|every) (\\d{1,2}) (ngày|ngay|days?|tuần|tuan|weeks?|tháng|thang|months?)'), (m) => {
+  take(tok('every (\\d{1,2}) (days?|weeks?|months?)'), (m) => {
     const n = Number(m[2]), u = m[3].toLowerCase();
     if (n < 1) return false;
-    out.recurrence = /^(ng|day)/.test(u) ? 'DAILY' : /^(tu|week)/.test(u) ? 'WEEKLY' : 'MONTHLY';
+    out.recurrence = u.startsWith('day') ? 'DAILY' : u.startsWith('week') ? 'WEEKLY' : 'MONTHLY';
     out.interval = n;
     return true;
   })
-    || take(tok('ngày thường|ngay thuong|weekdays?|thứ 2-6|t2-t6|thứ 2 đến thứ 6|thứ hai đến thứ sáu'), setRule('WEEKDAYS'))
-    || take(tok('every day|daily|hàng ngày|hang ngay|mỗi ngày|moi ngay'), setRule('DAILY'))
-    || take(tok('every week|weekly|hàng tuần|hang tuan|mỗi tuần|moi tuan'), setRule('WEEKLY'))
-    || take(tok('every month|monthly|hàng tháng|hang thang|mỗi tháng|moi thang'), setRule('MONTHLY'));
+    || take(tok('every weekday|weekdays?|mon-fri|monday-friday|monday to friday'), setRule('WEEKDAYS'))
+    || take(tok('every day|everyday|daily'), setRule('DAILY'))
+    || take(tok('every week|weekly'), setRule('WEEKLY'))
+    || take(tok('every month|monthly'), setRule('MONTHLY'));
 
   const setDate = (d) => () => { out.dueDate = d; };
-  take(tok('hôm nay|hom nay|today|tod'), setDate(today))
-    || take(tok('ngày kia|ngay kia|mốt'), setDate(addDays(today, 2)))
-    || take(tok('ngày mai|ngay mai|tomorrow|tmr'), setDate(addDays(today, 1)))
-    || take(tok('mai', 'u'), setDate(addDays(today, 1))) // chỉ khớp "mai" viết thường, tránh tên riêng "Mai"
-    || take(tok('chủ nhật|chu nhat'), () => { const wd = parseDateStr(today).getDay(); out.dueDate = addDays(today, ((7 - wd) % 7) || 7); })
-    || take(tok('thứ (hai|ba|tư|tu|năm|nam|sáu|sau|bảy|bay|[2-7])'), (m) => {
-      const wd = parseDateStr(today).getDay();
-      out.dueDate = addDays(today, ((WEEKDAY[m[2].toLowerCase()] - wd + 7) % 7) || 7);
+  // Weekday names always mean the next occurrence (never today); short forms need "on"/"next" ("Buy sun cream" stays a title)
+  const nextWeekday = (wd) => addDays(today, ((wd - parseDateStr(today).getDay() + 7) % 7) || 7);
+  take(tok('today|tonight'), setDate(today))
+    || take(tok('day after tomorrow'), setDate(addDays(today, 2)))
+    || take(tok('tomorrow|tmrw|tmr'), setDate(addDays(today, 1)))
+    || take(tok('(?:(?:on|next) )?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)|(?:on|next) (sun|mon|tues?|wed|thu(?:rs?)?|fri|sat)'), (m) => {
+      out.dueDate = nextWeekday(WEEKDAY[(m[2] || m[3]).toLowerCase()]);
     })
-    || take(tok('(?:(ngày|ngay) )?(\\d{1,2})/(\\d{1,2})(?:/(\\d{4}))?'), (m) => {
-      // "1/2 viên", "3/4 liều" là phân số, không phải ngày — trừ khi viết rõ "ngày 1/2" hoặc có năm
+    || take(tok('(?:(on) )?(\\d{1,2})/(\\d{1,2})(?:/(\\d{4}))?'), (m) => {
+      // Dates are day/month. "1/2 pill", "3/4 dose" are fractions, not dates — unless written as "on 1/2" or with a year
       if (!m[2] && !m[5] && FRACTIONS.has(`${Number(m[3])}/${Number(m[4])}`)) return false;
       const year = m[5] ? Number(m[5]) : Number(today.slice(0, 4));
       let d = `${year}-${pad2(m[4])}-${pad2(m[3])}`;
@@ -159,16 +160,15 @@ function parseQuickAdd(rawText, tags, today) {
       return true;
     });
 
-  // Giờ: "14:30", "9h30" luôn là giờ. "9h" trần chỉ là giờ khi có "lúc" đứng trước hoặc sáng/trưa/chiều/tối đứng sau;
-  // nếu không thì đó là thời lượng ("backtest 2h") và được giữ nguyên trong tiêu đề.
-  take(tok('(?:(lúc|luc|vào lúc|vao luc) )?(\\d{1,2})(?:(:)(\\d{2})|h(\\d{2})?)(?: ?(am|pm|sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem))?'), (m) => {
+  // Times: "14:30", "9:30", "9h30" are always times. A bare number ("9", "9h") is a time only with "at" before it
+  // or am/pm after it; otherwise it is a duration ("backtest 2h") and stays in the title.
+  take(tok('(?:(at) )?(\\d{1,2})(?:(:)(\\d{2})|h(\\d{2})?)?(?: ?(am|pm))?'), (m) => {
     if (!m[2] && !m[4] && !m[6] && !m[7]) return false;
     let h = Number(m[3]);
     const min = Number(m[5] || m[6] || 0);
     const sfx = (m[7] || '').toLowerCase();
-    if (['pm', 'chiều', 'chieu', 'tối', 'toi'].includes(sfx) && h < 12) h += 12;
-    else if (['trưa', 'trua'].includes(sfx) && h < 10) h += 12;
-    else if (['đêm', 'dem'].includes(sfx) && h >= 6 && h < 12) h += 12;
+    if (sfx === 'pm' && h < 12) h += 12;
+    else if (sfx === 'am' && h === 12) h = 0;
     if (h > 23 || min > 59) return false;
     out.dueTime = `${pad2(h)}:${pad2(min)}`;
     return true;
@@ -185,9 +185,9 @@ function parseQuickAdd(rawText, tags, today) {
 }
 
 // ==========================================
-// 1D. BỘ MÁY LẶP
+// 1D. RECURRENCE ENGINE
 // ==========================================
-// Việc lặp hàng tháng giữ "ngày gốc" (recurrenceDay): hẹn ngày 31 → 28/02 → 31/03, không trôi dần về 28 như v3
+// Monthly repeats keep the "anchor day" (recurrenceDay): due on the 31st → Feb 28 → Mar 31, no drifting to the 28th like v3
 function nextDueDate(t, today) {
   const rule = t.recurrenceRule, n = Math.max(1, t.recurrenceInterval || 1), fromDone = t.recurrenceType === 1;
   if (!RULES.includes(rule) || rule === 'NONE') return t.dueDate;
@@ -196,17 +196,17 @@ function nextDueDate(t, today) {
     if (rule === 'WEEKLY') return addDays(s, 7 * n);
     if (rule === 'MONTHLY') {
       const anchor = fromDone ? undefined : t.recurrenceDay || undefined;
-      // Hạn đang bị dời tạm trước ngày gốc trong cùng tháng → kỳ kế tiếp là ngày gốc của chính tháng đó
+      // Due date temporarily moved before the anchor day in the same month → the next occurrence is that month's anchor day
       const sameMonth = anchor && n === 1 ? addMonths(s, 0, anchor) : s;
       return sameMonth > s ? sameMonth : addMonths(s, n, anchor);
     }
-    let d = addDays(s, 1); // WEEKDAYS: bỏ qua thứ Bảy, Chủ nhật
+    let d = addDays(s, 1); // WEEKDAYS: skip Saturday and Sunday
     while ([0, 6].includes(parseDateStr(d).getDay())) d = addDays(d, 1);
     return d;
   };
   if (fromDone || !t.dueDate) return step(today);
   let next = step(t.dueDate);
-  // Quá hạn nhiều kỳ: nhảy thẳng tới kỳ chưa trôi qua thay vì bắt bấm hoàn thành từng kỳ
+  // Overdue by several periods: jump straight to the next future occurrence instead of completing each one
   for (let i = 0; i < 2000 && next < today; i++) next = step(next);
   return next;
 }
@@ -216,7 +216,7 @@ const withAnchor = (t) => {
 };
 
 // ==========================================
-// 1E. DỮ LIỆU MẪU + NORMALIZE (một hàm dùng chung cho nạp / import / kiểm tra toàn vẹn)
+// 1E. SAMPLE DATA + NORMALIZE (one function shared by load / import / integrity check)
 // ==========================================
 function makeTask(p, nowIso) {
   return {
@@ -236,37 +236,37 @@ function seedRaw(today, nowIso) {
   const t = (p) => makeTask(p, nowIso);
   return {
     schemaVersion: SCHEMA, lastUpdatedAt: nowIso, settings: { ...DEFAULT_SETTINGS },
-    folders: [{ id: 'f-1', name: 'Công việc' }, { id: 'f-2', name: 'Cá nhân' }],
+    folders: [{ id: 'f-1', name: 'Work' }, { id: 'f-2', name: 'Personal' }],
     lists: [
-      { id: 'l-1', name: 'Dự án iOS Local-First', color: '#3B82F6', folderId: 'f-1' },
-      { id: 'l-2', name: 'Vận hành & Họp', color: '#8B5CF6', folderId: 'f-1' },
-      { id: 'l-3', name: 'Sức khỏe & Đời sống', color: '#10B981', folderId: 'f-2' },
-      { id: 'l-4', name: 'Đọc sách & Học tập', color: '#F59E0B', folderId: 'f-2' }
+      { id: 'l-1', name: 'iOS Local-First Project', color: '#3B82F6', folderId: 'f-1' },
+      { id: 'l-2', name: 'Operations & Meetings', color: '#8B5CF6', folderId: 'f-1' },
+      { id: 'l-3', name: 'Health & Life', color: '#10B981', folderId: 'f-2' },
+      { id: 'l-4', name: 'Reading & Learning', color: '#F59E0B', folderId: 'f-2' }
     ],
     tags: [
       { id: 't-1', name: 'urgent', color: '#EF4444' }, { id: 't-2', name: 'deep-work', color: '#6366F1' },
       { id: 't-3', name: 'quick', color: '#10B981' }, { id: 't-4', name: 'coding', color: '#0EA5E9' }
     ],
     tasks: [
-      t({ id: 'task-1', title: 'Thiết kế Database Schema GRDB với WAL mode', content: 'Cấu hình Write-Ahead Logging để tránh lock database khi Widget và App cùng truy cập.', listId: 'l-1', priority: 3, dueDate: today, dueTime: '10:00', tags: ['t-1', 't-4'],
-        subtasks: [{ id: 'sub-1', title: 'Định nghĩa bảng TASK và SUBTASK', isCompleted: true }, { id: 'sub-2', title: 'Thiết lập Foreign Key Cascade Delete', isCompleted: true }, { id: 'sub-3', title: 'Viết Unit Test cho Concurrency', isCompleted: false }] }),
-      t({ id: 'task-2', title: 'Viết Recurring Task Engine (clone lịch sử)', content: 'Hoàn thành task lặp → nhân bản 1 bản ghi Completed để giữ lịch sử, rồi dời DueDate của task gốc.', listId: 'l-1', priority: 3, dueDate: today, dueTime: '14:30', recurrenceRule: 'DAILY', recurrenceType: 1, tags: ['t-2', 't-4'] }),
-      t({ id: 'task-3', title: 'Tập thể dục 30 phút', content: 'Chạy bộ hoặc nhảy dây tại nhà.', listId: 'l-3', priority: 2, dueDate: today, dueTime: '17:30', recurrenceRule: 'DAILY', tags: ['t-3'] }),
-      t({ id: 'task-4', title: 'Kiểm tra giới hạn 64 Local Notifications của iOS', content: 'Chỉ đăng ký thông báo cho 14 ngày gần nhất qua BGAppRefreshTask.', listId: 'l-1', priority: 1, dueDate: addDays(today, 1), dueTime: '09:00', tags: ['t-4'] }),
-      t({ id: 'task-5', title: 'Thanh toán hóa đơn Internet & Điện nước', content: 'Kiểm tra biên lai trên ứng dụng ngân hàng.', priority: 2, dueDate: addDays(today, -1), recurrenceRule: 'MONTHLY', tags: ['t-1'] }),
-      t({ id: 'task-6', title: 'Ghi chú kiến trúc: vì sao không dùng AI trong bản Local-First?', content: '1. Riêng tư tuyệt đối, 100% offline.\n2. Không phụ thuộc API key hay phí server.\n3. Parser quy tắc là đủ để bóc ngày giờ tiếng Việt/Anh cơ bản.', listId: 'l-4', tags: ['t-2'], isNote: true })
+      t({ id: 'task-1', title: 'Design the GRDB database schema with WAL mode', content: 'Configure Write-Ahead Logging to avoid database locks when the Widget and the App access it at the same time.', listId: 'l-1', priority: 3, dueDate: today, dueTime: '10:00', tags: ['t-1', 't-4'],
+        subtasks: [{ id: 'sub-1', title: 'Define the TASK and SUBTASK tables', isCompleted: true }, { id: 'sub-2', title: 'Set up foreign key cascade delete', isCompleted: true }, { id: 'sub-3', title: 'Write unit tests for concurrency', isCompleted: false }] }),
+      t({ id: 'task-2', title: 'Build the recurring task engine (history clones)', content: 'Completing a recurring task → clone one Completed record to keep history, then move the DueDate of the original task.', listId: 'l-1', priority: 3, dueDate: today, dueTime: '14:30', recurrenceRule: 'DAILY', recurrenceType: 1, tags: ['t-2', 't-4'] }),
+      t({ id: 'task-3', title: '30-minute workout', content: 'Run or jump rope at home.', listId: 'l-3', priority: 2, dueDate: today, dueTime: '17:30', recurrenceRule: 'DAILY', tags: ['t-3'] }),
+      t({ id: 'task-4', title: 'Check the iOS limit of 64 local notifications', content: 'Only schedule notifications for the next 14 days via BGAppRefreshTask.', listId: 'l-1', priority: 1, dueDate: addDays(today, 1), dueTime: '09:00', tags: ['t-4'] }),
+      t({ id: 'task-5', title: 'Pay internet & utility bills', content: 'Check the receipt in the banking app.', priority: 2, dueDate: addDays(today, -1), recurrenceRule: 'MONTHLY', tags: ['t-1'] }),
+      t({ id: 'task-6', title: 'Architecture note: why no AI in the Local-First version?', content: '1. Complete privacy, 100% offline.\n2. No API keys or server fees.\n3. A rule-based parser is enough to extract basic dates and times.', listId: 'l-4', tags: ['t-2'], isNote: true })
     ],
     habits: [
-      { id: 'h-1', name: 'Uống đủ 2L nước', icon: '💧', color: '#0EA5E9', logs: { [addDays(today, -2)]: 1, [addDays(today, -1)]: 1, [today]: 1 } },
-      { id: 'h-2', name: 'Đọc sách 20 trang', icon: '📚', color: '#F59E0B', logs: { [addDays(today, -3)]: 1, [addDays(today, -1)]: 1 } },
-      { id: 'h-3', name: 'Thiền định', icon: '🧘', color: '#10B981', logs: {} },
-      { id: 'h-4', name: 'Viết DevLog', icon: '💻', color: '#8B5CF6', logs: { [addDays(today, -1)]: 1, [today]: 1 } }
+      { id: 'h-1', name: 'Drink 2L of water', icon: '💧', color: '#0EA5E9', logs: { [addDays(today, -2)]: 1, [addDays(today, -1)]: 1, [today]: 1 } },
+      { id: 'h-2', name: 'Read 20 pages', icon: '📚', color: '#F59E0B', logs: { [addDays(today, -3)]: 1, [addDays(today, -1)]: 1 } },
+      { id: 'h-3', name: 'Meditate', icon: '🧘', color: '#10B981', logs: {} },
+      { id: 'h-4', name: 'Write a DevLog', icon: '💻', color: '#8B5CF6', logs: { [addDays(today, -1)]: 1, [today]: 1 } }
     ],
     countdowns: [
-      { id: 'cd-1', title: 'Ra mắt App iOS', targetDate: addDays(today, 30), icon: '🚀' },
-      { id: 'cd-2', title: 'Backup năm & bảo dưỡng thiết bị', targetDate: addDays(today, 90), icon: '🛡️' }
+      { id: 'cd-1', title: 'iOS app launch', targetDate: addDays(today, 30), icon: '🚀' },
+      { id: 'cd-2', title: 'Yearly backup & device maintenance', targetDate: addDays(today, 90), icon: '🛡️' }
     ],
-    smartFilters: [{ id: 'sf-1', name: '🔥 Việc gấp & Deep Work', priority: 3, tagId: 't-2', onlyOverdueOrToday: true }],
+    smartFilters: [{ id: 'sf-1', name: '🔥 Urgent & Deep Work', priority: 3, tagId: 't-2', onlyOverdueOrToday: true }],
     focusSessions: []
   };
 }
@@ -286,12 +286,12 @@ function normalizeDb(raw) {
   const str = (v, dflt = '') => (typeof v === 'string' ? v : dflt);
   const nowIso = new Date().toISOString();
 
-  const folders = coll('folders').map((f) => ({ id: f.id, name: str(f.name, 'Thư mục') }));
+  const folders = coll('folders').map((f) => ({ id: f.id, name: str(f.name, 'Folder') }));
   const folderIds = new Set(folders.map((f) => f.id));
   const lists = coll('lists').map((l) => {
     let folderId = l.folderId ?? null;
     if (folderId && !folderIds.has(folderId)) { folderId = null; fixes.orphanFolders++; }
-    return { id: l.id, name: str(l.name, 'Danh sách'), color: str(l.color, PALETTE[0]), folderId };
+    return { id: l.id, name: str(l.name, 'List'), color: str(l.color, PALETTE[0]), folderId };
   });
   const listIds = new Set(lists.map((l) => l.id));
   const tags = coll('tags').map((t) => ({ id: t.id, name: str(t.name, 'tag'), color: str(t.color, PALETTE[2]) }));
@@ -313,11 +313,11 @@ function normalizeDb(raw) {
     const dueDate = isDateStr(t.dueDate) ? t.dueDate : null;
     const rule = RULES.includes(t.recurrenceRule) ? t.recurrenceRule : 'NONE';
     return {
-      id: t.id, title: str(t.title).trim() || '(Không tiêu đề)', content: str(t.content), listId,
+      id: t.id, title: str(t.title).trim() || '(Untitled)', content: str(t.content), listId,
       isCompleted, isDeleted: !!t.isDeleted,
       priority: [0, 1, 2, 3].includes(Number(t.priority)) ? Number(t.priority) : 0,
       dueDate,
-      // v2 có cờ isAllDay riêng; v3 quy ước "không có giờ = cả ngày"
+      // v2 had a separate isAllDay flag; v3 treats "no time = all day"
       dueTime: t.isAllDay !== true && isTimeStr(t.dueTime) ? t.dueTime : null,
       recurrenceRule: rule,
       recurrenceType: t.recurrenceType === 1 ? 1 : 0,
@@ -338,14 +338,14 @@ function normalizeDb(raw) {
       for (const k of Object.keys(h.logs)) if (isDateStr(k) && h.logs[k]) logs[k] = h.logs[k] === 2 ? 2 : 1;
     }
     const days = [...new Set(Array.isArray(h.days) ? h.days : [])].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
-    return { id: h.id, name: str(h.name, 'Thói quen'), icon: str(h.icon, '🔥'), color: str(h.color, PALETTE[0]), days: days.length ? days : ALL_DAYS, logs };
+    return { id: h.id, name: str(h.name, 'Habit'), icon: str(h.icon, '🔥'), color: str(h.color, PALETTE[0]), days: days.length ? days : ALL_DAYS, logs };
   });
   const countdowns = coll('countdowns').filter((c) => isDateStr(c.targetDate) || (fixes.dropped++, false))
-    .map((c) => ({ id: c.id, title: str(c.title, 'Sự kiện'), targetDate: c.targetDate, icon: str(c.icon, '🎯') }));
+    .map((c) => ({ id: c.id, title: str(c.title, 'Event'), targetDate: c.targetDate, icon: str(c.icon, '🎯') }));
   const smartFilters = coll('smartFilters').map((f) => {
     let tagId = f.tagId ?? null;
     if (tagId && !tagIds.has(tagId)) { tagId = null; fixes.orphanTags++; }
-    return { id: f.id, name: str(f.name, 'Bộ lọc'), priority: [-1, 0, 1, 2, 3].includes(Number(f.priority)) ? Number(f.priority) : -1, tagId, onlyOverdueOrToday: !!f.onlyOverdueOrToday };
+    return { id: f.id, name: str(f.name, 'Filter'), priority: [-1, 0, 1, 2, 3].includes(Number(f.priority)) ? Number(f.priority) : -1, tagId, onlyOverdueOrToday: !!f.onlyOverdueOrToday };
   });
   const focusSessions = coll('focusSessions').map((s) => {
     let taskId = s.taskId ?? null;
@@ -375,14 +375,14 @@ function normalizeDb(raw) {
 }
 
 // ==========================================
-// 1F. REDUCER — thuần tuyệt đối (id, thời gian đều do action mang vào)
+// 1F. REDUCER — strictly pure (ids and timestamps are carried in by the action)
 // ==========================================
 function reducer(db, a) {
   const mapTask = (id, fn) => ({ ...db, tasks: db.tasks.map((t) => (t.id === id ? fn(t) : t)) });
   switch (a.type) {
     case 'REPLACE': return a.db;
     case 'ADD_TASK': return { ...db, tasks: [withAnchor(a.task), ...db.tasks], tags: a.newTags?.length ? [...db.tags, ...a.newTags] : db.tags };
-    // keepAnchor: dời hạn tạm thời ("sang mai") không được đổi ngày gốc của việc lặp hàng tháng
+    // keepAnchor: temporarily moving the due date ("to tomorrow") must not change a monthly task's anchor day
     case 'UPDATE_TASK': return mapTask(a.id, (t) => (a.keepAnchor ? { ...t, ...a.patch } : withAnchor({ ...t, ...a.patch })));
     case 'TOGGLE_TASK': {
       const t = db.tasks.find((x) => x.id === a.id);
@@ -445,7 +445,7 @@ function reducer(db, a) {
         archive: { tasks: db.archive.tasks + old.tasks.length, sessions: db.archive.sessions + old.sessions.length, focusSec: db.archive.focusSec + old.sessions.reduce((x, s) => x + s.duration, 0), lastAt: a.at }
       };
     }
-    case 'UNDO_PATCH': { // hoàn tác đúng một thao tác, giữ nguyên mọi thay đổi diễn ra sau nó
+    case 'UNDO_PATCH': { // undo exactly one action, keeping every change made after it
       const next = { ...db };
       for (const c of COLLECTIONS) {
         const gone = new Set(a.patch.remove[c] || []), back = a.patch.restore[c] || [];
@@ -464,7 +464,7 @@ function reducer(db, a) {
       ...db, tasks: [...db.tasks, ...a.tasks], focusSessions: [...db.focusSessions, ...a.sessions],
       habits: db.habits.map((h) => {
         const logs = { ...h.logs };
-        for (const d of a.habitDays[h.id] || []) if (!logs[d]) logs[d] = 2; // 2 = bản ghi giả lập, gỡ được
+        for (const d of a.habitDays[h.id] || []) if (!logs[d]) logs[d] = 2; // 2 = simulated entry, removable
         return { ...h, logs };
       })
     };
@@ -477,7 +477,7 @@ function reducer(db, a) {
 }
 
 const COLLECTIONS = ['tasks', 'focusSessions', 'habits', 'lists', 'folders', 'tags', 'countdowns', 'smartFilters'];
-// Ghi lại đúng những bản ghi mà một thao tác đã thêm / sửa / xoá, để hoàn tác riêng thao tác đó
+// Record exactly the rows an action added / changed / removed, so that action alone can be undone
 function diffDb(prev, next) {
   const patch = { restore: {}, remove: {}, settings: prev.settings !== next.settings ? prev.settings : null, archive: prev.archive !== next.archive ? prev.archive : null };
   for (const c of COLLECTIONS) {
@@ -490,12 +490,12 @@ function diffDb(prev, next) {
 }
 
 // ==========================================
-// 1G. SELECTOR — một hàm khớp view dùng cho cả lọc lẫn đếm badge (v2 đếm "7 ngày tới" sai)
+// 1G. SELECTORS — one view matcher shared by filtering and badge counts (v2 miscounted "Next 7 days")
 // ==========================================
 function matchesView(task, viewId, ctx) {
   if (viewId === 'SMART_TRASH') return task.isDeleted;
   if (task.isDeleted) return false;
-  if (viewId === 'SEARCH_ALL') return true; // tìm toàn bộ, gồm cả ghi chú
+  if (viewId === 'SEARCH_ALL') return true; // search everything, notes included
   if (viewId === 'SMART_NOTES') return task.isNote;
   if (viewId === 'SMART_ALL') return !task.isNote;
   if (viewId === 'SMART_TODAY') return !task.isNote && !!task.dueDate && task.dueDate <= ctx.today;
@@ -529,7 +529,7 @@ function selectTasks(db, viewId, query, today) {
     .sort(compareTasks);
 }
 
-// Đếm toàn bộ badge trong MỘT lượt duyệt (v2 duyệt lại cả mảng ~12 lần mỗi lần render)
+// Count every badge in ONE pass (v2 re-scanned the whole array ~12 times per render)
 function computeCounts(db, today) {
   const next7 = addDays(today, 7);
   const c = { SMART_TODAY: 0, SMART_NEXT7: 0, SMART_INBOX: 0, SMART_ALL: 0, SMART_NOTES: 0, SMART_TRASH: 0, SMART_COUNTDOWN: db.countdowns.length, lists: {}, done: 0, byDate: {} };
@@ -548,7 +548,7 @@ function computeCounts(db, today) {
   return c;
 }
 
-// Chuỗi thói quen tính theo lịch của từng thói quen: ngày không nằm trong lịch không làm đứt chuỗi
+// Habit streaks follow each habit's schedule: unscheduled days don't break the streak
 function habitStats(habit, today) {
   const days = habit.days && habit.days.length ? habit.days : ALL_DAYS;
   const sched = (d) => days.includes(parseDateStr(d).getDay());
@@ -569,25 +569,25 @@ function focusByList(db, sessions) {
   const listName = new Map(db.lists.map((l) => [l.id, l.name]));
   const acc = new Map();
   for (const s of sessions) {
-    const name = !s.taskId ? 'Phiên tự do' : listName.get(taskList.get(s.taskId)) || 'Hộp thư đến';
+    const name = !s.taskId ? 'Free session' : listName.get(taskList.get(s.taskId)) || 'Inbox';
     acc.set(name, (acc.get(name) || 0) + s.duration);
   }
   return [...acc].map(([name, sec]) => ({ name, minutes: Math.round(sec / 60) })).sort((a, b) => b.minutes - a.minutes);
 }
 
-// Việc đã xong và phiên tập trung cũ hơn mốc cutoff → đủ điều kiện đưa ra file lưu trữ
+// Completed tasks and focus sessions older than the cutoff → eligible for the archive file
 function selectArchivable(db, cutoff) {
   const tasks = db.tasks.filter((t) => !t.isNote && t.isCompleted && ((t.completedAt && isoToLocalDate(t.completedAt)) || t.dueDate || isoToLocalDate(t.createdAt) || '9999') < cutoff);
   const sessions = db.focusSessions.filter((s) => (isoToLocalDate(s.startTime) || '9999') < cutoff);
   return { tasks, sessions };
 }
 
-// File .ics để iPhone tự nhắc giờ qua app Lịch — cách nhắc duy nhất không cần máy chủ
+// .ics file so the iPhone reminds you through the Calendar app — the only reminder method that needs no server
 function buildIcs(tasks, leadMin, nowIso) {
   const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/([,;])/g, '\\$1');
   const stamp = `${nowIso.replace(/[-:]/g, '').slice(0, 15)}Z`;
   const ymd = (d) => d.replace(/-/g, '');
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//TickLocal//v4//VI', 'CALSCALE:GREGORIAN'];
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//TickLocal//v4//EN', 'CALSCALE:GREGORIAN'];
   for (const t of tasks) {
     if (!t.dueDate) continue;
     lines.push('BEGIN:VEVENT', `UID:${t.id}@ticklocal`, `DTSTAMP:${stamp}`, `SUMMARY:${esc(t.title)}`);
@@ -613,7 +613,7 @@ function buildReview(db, days, today) {
   const listName = new Map(db.lists.map((l) => [l.id, l.name]));
   const groups = new Map();
   for (const t of completed) {
-    const k = listName.get(t.listId) || 'Hộp thư đến';
+    const k = listName.get(t.listId) || 'Inbox';
     groups.set(k, [...(groups.get(k) || []), t]);
   }
   const sessions = db.focusSessions.filter((s) => inRange(isoToLocalDate(s.startTime)));
@@ -627,29 +627,29 @@ function buildReview(db, days, today) {
   const byList = focusByList(db, sessions);
   const habitRate = habits.length ? Math.round(habits.reduce((a, h) => a + h.rate, 0) / habits.length) : 0;
 
-  let md = `# Tổng kết ${days} ngày (${start} → ${today})\n\n`;
-  md += `## 1. Chỉ số chính\n- Hoàn thành: **${completed.length} việc**\n- Đến hạn/quá hạn chưa xong: **${pending.length} việc**\n- Tập trung: **${focusMinutes} phút** (${sessions.length} phiên)\n- Thói quen trung bình: **${habitRate}%**\n\n`;
-  md += `## 2. Việc đã xong theo danh sách\n`;
-  if (!groups.size) md += `_Chưa có việc nào hoàn thành trong giai đoạn này._\n`;
+  let md = `# ${days}-day review (${start} → ${today})\n\n`;
+  md += `## 1. Key metrics\n- Completed: **${completed.length} tasks**\n- Due/overdue, not done: **${pending.length} tasks**\n- Focus: **${focusMinutes} min** (${sessions.length} sessions)\n- Average habit rate: **${habitRate}%**\n\n`;
+  md += `## 2. Completed tasks by list\n`;
+  if (!groups.size) md += `_No tasks completed in this period._\n`;
   for (const [name, items] of groups) {
     md += `### ${name} (${items.length})\n`;
     items.slice(0, 15).forEach((t) => { md += `- [x] ${t.title}\n`; });
-    if (items.length > 15) md += `- … và ${items.length - 15} việc khác\n`;
+    if (items.length > 15) md += `- … and ${items.length - 15} more\n`;
   }
-  md += `\n## 3. Thói quen\n`;
-  habits.forEach((h) => { md += `- ${h.icon} ${h.name}: ${h.done}/${h.planned} ngày theo lịch (${h.rate}%)\n`; });
+  md += `\n## 3. Habits\n`;
+  habits.forEach((h) => { md += `- ${h.icon} ${h.name}: ${h.done}/${h.planned} scheduled days (${h.rate}%)\n`; });
   if (byList.length) {
-    md += `\n## Giờ tập trung theo danh sách\n`;
-    byList.forEach((r) => { md += `- ${r.name}: ${r.minutes} phút\n`; });
+    md += `\n## Focus time by list\n`;
+    byList.forEach((r) => { md += `- ${r.name}: ${r.minutes} min\n`; });
   }
   if (pending.length) {
-    md += `\n## 4. Cần xử lý tiếp\n`;
-    pending.slice(0, 8).forEach((t) => { md += `- [ ] ${t.title} (hạn ${t.dueDate})\n`; });
+    md += `\n## 4. Still to do\n`;
+    pending.slice(0, 8).forEach((t) => { md += `- [ ] ${t.title} (due ${t.dueDate})\n`; });
   }
-  return { days, start, end: today, completedCount: completed.length, pendingCount: pending.length, focusMinutes, sessionsCount: sessions.length, habitRate, byList, markdown: md, title: `Tổng kết ${days} ngày (${start} → ${today})` };
+  return { days, start, end: today, completedCount: completed.length, pendingCount: pending.length, focusMinutes, sessionsCount: sessions.length, habitRate, byList, markdown: md, title: `${days}-day review (${start} → ${today})` };
 }
 
-// Timer tính theo mốc thời gian thật, không đếm tick → không trôi khi khoá máy / chuyển tab
+// The timer uses real timestamps, not tick counting → no drift when the screen locks or the tab changes
 const IDLE_TIMER = { mode: 'POMODORO', phase: 'FOCUS', running: false, endAt: null, remainMs: null, startedAt: null, elapsedMs: 0, sessionStart: null, taskId: null, round: 0 };
 const phaseMs = (phase, s) => (phase === 'FOCUS' ? s.focusMin : phase === 'SHORT' ? s.shortMin : s.longMin) * 60000;
 const timerMs = (t, s, now) => (t.mode === 'STOPWATCH'
@@ -662,7 +662,7 @@ const fmtClock = (ms, up) => {
 };
 
 export {
-  pad2, toDateStr, parseDateStr, isDateStr, isTimeStr, todayStr, addDays, addMonths, diffDays, isoToLocalDate, fmtDate,
+  pad2, MONTHS, toDateStr, parseDateStr, isDateStr, isTimeStr, todayStr, addDays, addMonths, diffDays, isoToLocalDate, fmtDate,
   SCHEMA, STORAGE_KEY, LEGACY_KEYS, TIMER_KEY, RULES, RULE_LABEL, WEEKDAY_SHORT, ALL_DAYS, ruleLabel, PALETTE, EMOJIS, NOISES, PRIORITY,
   DEFAULT_SETTINGS, SMART, uid, clampInt, nearestTag, parseQuickAdd, nextDueDate, makeTask, seedData, normalizeDb, reducer,
   diffDb, matchesView, compareTasks, selectTasks, computeCounts, habitStats, focusByList, selectArchivable, buildIcs, buildReview,

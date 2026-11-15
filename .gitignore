@@ -1,5 +1,5 @@
 node_modules
 dist
 .DS_Store
-# file sao lưu và lưu trữ có dữ liệu cá nhân — không đẩy lên GitHub
+# backup and archive files contain personal data — never push them to GitHub
 TickLocal_*.json
